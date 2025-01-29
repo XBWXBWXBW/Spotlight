@@ -42,14 +42,19 @@ namespace Spotlight.GUI
 
         KeyValuePair<string, GamePreset>[] GamePresets = new KeyValuePair<string, GamePreset>[]
         {
-#if ODYSSEY
-            new ("Super Mario Odyssey", new GamePreset(ByteOrder.LittleEndian, StageArcType.Split))
-#else
-            new ("Super Mario 3D World",                          new GamePreset(ByteOrder.BigEndian,    StageArcType.Split)),
-            new ("SM3DW + Bowsers Fury",                          new GamePreset(ByteOrder.LittleEndian, StageArcType.Combined)),
-            new ("Captain Toad Treasure Tracker (Wii U)",         new GamePreset(ByteOrder.BigEndian,    StageArcType.Split)),
-            new ("Captain Toad Treasure Tracker (Switch)",        new GamePreset(ByteOrder.LittleEndian, StageArcType.Split)),
-            new ("Captain Toad Treasure Tracker (Switch Update)", new GamePreset(ByteOrder.LittleEndian, StageArcType.Combined)),
+        #if ODYSSEY
+                    new ("Super Mario Odyssey", new GamePreset(ByteOrder.LittleEndian, StageArcType.Split))
+        #else
+                    //new ("Super Mario 3D World",                          new GamePreset(ByteOrder.BigEndian,    StageArcType.Split)),
+                    //new ("SM3DW + Bowsers Fury",                          new GamePreset(ByteOrder.LittleEndian, StageArcType.Combined)),
+                    //new ("Captain Toad Treasure Tracker (Wii U)",         new GamePreset(ByteOrder.BigEndian,    StageArcType.Split)),
+                    //new ("Captain Toad Treasure Tracker (Switch)",        new GamePreset(ByteOrder.LittleEndian, StageArcType.Split)),
+                    //new ("Captain Toad Treasure Tracker (Switch Update)", new GamePreset(ByteOrder.LittleEndian, StageArcType.Combined)),
+                    new KeyValuePair<string, GamePreset>("Super Mario 3D World", new GamePreset(ByteOrder.BigEndian, StageArcType.Split)),
+    new KeyValuePair<string, GamePreset>("SM3DW + Bowsers Fury", new GamePreset(ByteOrder.LittleEndian, StageArcType.Combined)),
+    new KeyValuePair<string, GamePreset>("Captain Toad Treasure Tracker (Wii U)", new GamePreset(ByteOrder.BigEndian, StageArcType.Split)),
+    new KeyValuePair<string, GamePreset>("Captain Toad Treasure Tracker (Switch)", new GamePreset(ByteOrder.LittleEndian, StageArcType.Split)),
+    new KeyValuePair<string, GamePreset>("Captain Toad Treasure Tracker (Switch Update)", new GamePreset(ByteOrder.LittleEndian, StageArcType.Combined))
 #endif
         };
 
