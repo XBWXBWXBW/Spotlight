@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 using FileFormats3DW;
 using GL_EditorFramework;
@@ -22,6 +21,9 @@ using SharpGLTF.Geometry.VertexTypes;
 using System.ComponentModel;
 using SharpGLTF.Materials;
 using SZS;
+
+using Spotlight.XBW;
+using System.Text.RegularExpressions;
 
 namespace Spotlight.ObjectRenderers
 {
@@ -232,8 +234,7 @@ namespace Spotlight.ObjectRenderers
                 passes = new Pass[mdl.Shapes.Count];
                 
                 int shapeIndex = 0;
-
-                foreach(Shape shape in mdl.Shapes.Values)
+                foreach (Shape shape in mdl.Shapes.Values)
                 {
                     uint[] indices = shape.Meshes[0].GetIndices().ToArray();
 
@@ -547,267 +548,27 @@ namespace Spotlight.ObjectRenderers
 
                     shapeIndex++;
 
-                    if (xbw_Name == "EnterCatMarioStepA") {
                     //XBW
-                        //ExportModelToDAE(@"..\ExportModelFile\BlockHard.dae", bufferData, indices);
-                        ExportModelToDAE(@"D:\Project\Spotlight_3DWorld\ExportModelFile\BlockHard.dae", bufferData, indices);
+                    //这里是遍历大模型中的所有的shape，把shape的bufferData和Indices保存下来，
+                    //要导出模型，只需要这个bufferData和Indices即可
+                    if (!Regex.IsMatch(shape.Name, @"^.+Mat(\d{2})?$"))
+                    {
+                        //shape的名字后面不是"Mat"或者"Mat01","Mat02"等，即Mat后面没有数字，或者Mat后面跟着2个数字
+                        float[] _bufferData = new float[9 * vec4Positions.Length];
+                        bufferData.CopyTo(_bufferData, 0);
+                        string id = mdl.Name + "_" + shape.Name;
+                        XBW_OutputStageModel.shape_BufferData.Add(id, _bufferData);
+                        XBW_OutputStageModel.shape_Indices.Add(id, shape.Meshes[0].GetIndices().ToArray());
+                        XBW_OutputStageModel.shape_Name.Add(id, shape.Name);
+                        XBW_OutputStageModel.shape_Parent.Add(id, mdl.Name);
+                    }
+
+                    if (xbw_Name == "EnterCatMarioStepA")
+                    {
+                        Console.WriteLine("");
                     }
                 }
             }
-
-            //XBW 导出到dae文件
-            static void ExportModelToDAE(string filePath, float[] bufferData, uint[] indices)
-            {
-                // 获取目录路径
-                string directory = Path.GetDirectoryName(filePath);
-
-                // 如果目录不存在，则创建目录
-                if (!Directory.Exists(directory))
-                {
-                    Directory.CreateDirectory(directory);
-                }
-
-                // 如果文件不存在，则创建一个新文件
-                if (!File.Exists(filePath))
-                {
-                    using (FileStream fs = File.Create(filePath)) { }
-                }
-
-                using (StreamWriter writer = new StreamWriter(filePath))
-                {
-                    // 写入DAE文件头部
-                    writer.WriteLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-                    writer.WriteLine("<COLLADA xmlns=\"http://www.collada.org/2005/11/COLLADASchema\" version=\"1.4.1\">");
-
-                    // 写入几何数据
-                    writer.WriteLine("    <library_geometries>");
-                    writer.WriteLine("        <geometry id=\"geometry_1\">");
-                    writer.WriteLine("            <mesh>");
-
-                    // 顶点位置
-                    writer.WriteLine("                <source id=\"positions\">");
-                    writer.WriteLine("                    <float_array count=\"" + (bufferData.Length / 9 * 3) + "\">");
-
-                    for (int i = 0; i < bufferData.Length; i += 9)
-                    {
-                        writer.Write($"{bufferData[i]} {bufferData[i + 1]} {bufferData[i + 2]} ");
-                    }
-
-                    writer.WriteLine("</float_array>");
-                    writer.WriteLine("                    <technique_common>");
-                    writer.WriteLine("                        <accessor source=\"#positions\" count=\"" + (bufferData.Length / 9) + "\" stride=\"3\">");
-                    writer.WriteLine("                            <param name=\"X\" type=\"float\"/>");
-                    writer.WriteLine("                            <param name=\"Y\" type=\"float\"/>");
-                    writer.WriteLine("                            <param name=\"Z\" type=\"float\"/>");
-                    writer.WriteLine("                        </accessor>");
-                    writer.WriteLine("                    </technique_common>");
-                    writer.WriteLine("                </source>");
-
-                    // 法线
-                    writer.WriteLine("                <source id=\"normals\">");
-                    writer.WriteLine("                    <float_array count=\"" + (bufferData.Length / 9 * 3) + "\">");
-
-                    for (int i = 6; i < bufferData.Length; i += 9)
-                    {
-                        writer.Write($"{bufferData[i]} {bufferData[i + 1]} {bufferData[i + 2]} ");
-                    }
-
-                    writer.WriteLine("</float_array>");
-                    writer.WriteLine("                    <technique_common>");
-                    writer.WriteLine("                        <accessor source=\"#normals\" count=\"" + (bufferData.Length / 9) + "\" stride=\"3\">");
-                    writer.WriteLine("                            <param name=\"X\" type=\"float\"/>");
-                    writer.WriteLine("                            <param name=\"Y\" type=\"float\"/>");
-                    writer.WriteLine("                            <param name=\"Z\" type=\"float\"/>");
-                    writer.WriteLine("                        </accessor>");
-                    writer.WriteLine("                    </technique_common>");
-                    writer.WriteLine("                </source>");
-
-                    // 纹理坐标
-                    writer.WriteLine("                <source id=\"uvs\">");
-                    writer.WriteLine("                    <float_array count=\"" + (bufferData.Length / 9 * 2) + "\">");
-
-                    for (int i = 3; i < bufferData.Length; i += 9)
-                    {
-                        writer.Write($"{bufferData[i]} {1 - bufferData[i + 1]} ");
-                    }
-
-                    writer.WriteLine("</float_array>");
-                    writer.WriteLine("                    <technique_common>");
-                    writer.WriteLine("                        <accessor source=\"#uvs\" count=\"" + (bufferData.Length / 9) + "\" stride=\"2\">");
-                    writer.WriteLine("                            <param name=\"S\" type=\"float\"/>");
-                    writer.WriteLine("                            <param name=\"T\" type=\"float\"/>");
-                    writer.WriteLine("                        </accessor>");
-                    writer.WriteLine("                    </technique_common>");
-                    writer.WriteLine("                </source>");
-
-                    // 顶点索引和面数据
-                    writer.WriteLine("                <vertices id=\"vertices_1\">");
-                    writer.WriteLine("                    <input semantic=\"POSITION\" source=\"#positions\"/>");
-                    writer.WriteLine("                </vertices>");
-                    writer.WriteLine("                <triangles count=\"" + (indices.Length / 3) + "\">");
-                    writer.WriteLine("                    <input semantic=\"VERTEX\" source=\"#vertices_1\" offset=\"0\"/>");
-                    writer.WriteLine("                    <input semantic=\"NORMAL\" source=\"#normals\" offset=\"1\"/>");
-                    writer.WriteLine("                    <input semantic=\"TEXCOORD\" source=\"#uvs\" offset=\"2\"/>");
-                    writer.WriteLine("                    <p>");
-
-                    foreach (var index in indices)
-                    {
-                        writer.Write($"{index} {index} {index} ");
-                    }
-
-                    writer.WriteLine("</p>");
-                    writer.WriteLine("                </triangles>");
-                    writer.WriteLine("            </mesh>");
-                    writer.WriteLine("        </geometry>");
-                    writer.WriteLine("    </library_geometries>");
-
-                    // 视觉场景
-                    writer.WriteLine("    <library_visual_scenes>");
-                    writer.WriteLine("        <visual_scene id=\"scene_1\" name=\"Scene\">");
-                    writer.WriteLine("            <node id=\"node_1\" name=\"node_1\">");
-                    writer.WriteLine("                <instance_geometry url=\"#geometry_1\"/>");
-                    writer.WriteLine("            </node>");
-                    writer.WriteLine("        </visual_scene>");
-                    writer.WriteLine("    </library_visual_scenes>");
-
-                    // 场景引用
-                    writer.WriteLine("    <scene>");
-                    writer.WriteLine("        <instance_visual_scene url=\"#scene_1\"/>");
-                    writer.WriteLine("    </scene>");
-
-                    // 结束DAE文件
-                    writer.WriteLine("</COLLADA>");
-                }
-            }
-
-
-            //static void ExportModelToDAE(string filePath, float[] bufferData, uint[] indices)
-            //{
-            //    // 获取目录路径
-            //    string directory = Path.GetDirectoryName(filePath);
-
-            //    // 如果目录不存在，则创建目录
-            //    if (!Directory.Exists(directory))
-            //    {
-            //        Directory.CreateDirectory(directory);
-            //    }
-
-            //    // 如果文件不存在，则创建一个新文件
-            //    if (!File.Exists(filePath))
-            //    {
-            //        // 创建并打开文件
-            //        using (FileStream fs = File.Create(filePath))
-            //        {
-            //            // 文件创建时的初始内容可以为空，待后续写入
-            //        }
-            //    }
-            //    using (StreamWriter writer = new StreamWriter(filePath))
-            //    {
-            //        // 写入DAE文件头部
-            //        writer.WriteLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-            //        writer.WriteLine("<dae xmlns=\"http://www.collada.org/2005/11/COLLADASchema\">");
-
-            //        // 写入几何数据
-            //        writer.WriteLine("    <library_geometries>");
-            //        writer.WriteLine("        <geometry id=\"geometry_1\">");
-            //        writer.WriteLine("            <mesh>");
-
-            //        // 顶点位置
-            //        writer.WriteLine("                <source id=\"positions\">");
-            //        writer.WriteLine("                    <float_array count=\"" + (bufferData.Length / 9 * 3) + "\">");
-
-            //        for (int i = 0; i < bufferData.Length; i += 9)
-            //        {
-            //            writer.Write($"{bufferData[i]} {bufferData[i + 1]} {bufferData[i + 2]} ");
-            //        }
-
-            //        writer.WriteLine("</float_array>");
-            //        writer.WriteLine("                    <technique_common>");
-            //        writer.WriteLine("                        <accessor source=\"#positions\" count=\"" + (bufferData.Length / 9) + "\" stride=\"3\">");
-            //        writer.WriteLine("                            <param name=\"X\" type=\"float\"/>");
-            //        writer.WriteLine("                            <param name=\"Y\" type=\"float\"/>");
-            //        writer.WriteLine("                            <param name=\"Z\" type=\"float\"/>");
-            //        writer.WriteLine("                        </accessor>");
-            //        writer.WriteLine("                    </technique_common>");
-            //        writer.WriteLine("                </source>");
-
-            //        // 法线
-            //        writer.WriteLine("                <source id=\"normals\">");
-            //        writer.WriteLine("                    <float_array count=\"" + (bufferData.Length / 9 * 3) + "\">");
-
-            //        for (int i = 6; i < bufferData.Length; i += 9)
-            //        {
-            //            writer.Write($"{bufferData[i]} {bufferData[i + 1]} {bufferData[i + 2]} ");
-            //        }
-
-            //        writer.WriteLine("</float_array>");
-            //        writer.WriteLine("                    <technique_common>");
-            //        writer.WriteLine("                        <accessor source=\"#normals\" count=\"" + (bufferData.Length / 9) + "\" stride=\"3\">");
-            //        writer.WriteLine("                            <param name=\"X\" type=\"float\"/>");
-            //        writer.WriteLine("                            <param name=\"Y\" type=\"float\"/>");
-            //        writer.WriteLine("                            <param name=\"Z\" type=\"float\"/>");
-            //        writer.WriteLine("                        </accessor>");
-            //        writer.WriteLine("                    </technique_common>");
-            //        writer.WriteLine("                </source>");
-
-            //        // 纹理坐标
-            //        writer.WriteLine("                <source id=\"uvs\">");
-            //        writer.WriteLine("                    <float_array count=\"" + (bufferData.Length / 9 * 2) + "\">");
-
-            //        for (int i = 3; i < bufferData.Length; i += 9)
-            //        {
-            //            writer.Write($"{bufferData[i]} {bufferData[i + 1]} ");
-            //        }
-
-            //        writer.WriteLine("</float_array>");
-            //        writer.WriteLine("                    <technique_common>");
-            //        writer.WriteLine("                        <accessor source=\"#uvs\" count=\"" + (bufferData.Length / 9) + "\" stride=\"2\">");
-            //        writer.WriteLine("                            <param name=\"S\" type=\"float\"/>");
-            //        writer.WriteLine("                            <param name=\"T\" type=\"float\"/>");
-            //        writer.WriteLine("                        </accessor>");
-            //        writer.WriteLine("                    </technique_common>");
-            //        writer.WriteLine("                </source>");
-
-            //        // 顶点索引和面数据
-            //        writer.WriteLine("                <vertices id=\"vertices_1\">");
-            //        writer.WriteLine("                    <input semantic=\"POSITION\" source=\"#positions\"/>");
-            //        writer.WriteLine("                </vertices>");
-            //        writer.WriteLine("                <polylist count=\"" + (indices.Length / 3) + "\">");
-            //        writer.WriteLine("                    <input semantic=\"VERTEX\" source=\"#vertices_1\" offset=\"0\"/>");
-            //        writer.WriteLine("                    <input semantic=\"NORMAL\" source=\"#normals\" offset=\"1\"/>");
-            //        writer.WriteLine("                    <input semantic=\"TEXCOORD\" source=\"#uvs\" offset=\"2\"/>");
-            //        writer.WriteLine("                    <vcount>" + indices.Length / 3 + "</vcount>");
-            //        writer.WriteLine("                    <p>");
-
-            //        foreach (var index in indices)
-            //        {
-            //            writer.Write($"{index} ");
-            //        }
-
-            //        writer.WriteLine("</p>");
-            //        writer.WriteLine("                </polylist>");
-            //        writer.WriteLine("            </mesh>");
-            //        writer.WriteLine("        </geometry>");
-            //        writer.WriteLine("    </library_geometries>");
-
-            //        // 视觉场景
-            //        writer.WriteLine("    <library_visual_scenes>");
-            //        writer.WriteLine("        <visual_scene id=\"scene_1\" name=\"Scene\">");
-            //        writer.WriteLine("            <node id=\"node_1\" name=\"node_1\">");
-            //        writer.WriteLine("                <instance_geometry url=\"#geometry_1\"/>");
-            //        writer.WriteLine("            </node>");
-            //        writer.WriteLine("        </visual_scene>");
-            //        writer.WriteLine("    </library_visual_scenes>");
-
-            //        // 场景引用
-            //        writer.WriteLine("    <scene>");
-            //        writer.WriteLine("        <instance_visual_scene url=\"#scene_1\"/>");
-            //        writer.WriteLine("    </scene>");
-
-            //        // 结束DAE文件
-            //        writer.WriteLine("</dae>");
-            //    }
-            //}
 
             static Matrix4[] GetTransforms(Bone[] bones)
             {

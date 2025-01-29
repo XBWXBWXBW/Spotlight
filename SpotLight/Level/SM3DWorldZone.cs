@@ -499,7 +499,8 @@ namespace Spotlight.Level
                 {
                     Dictionary<long, I3dWorldObject> objectsByReference = new Dictionary<long, I3dWorldObject>();
 
-                    levelReader.LoadStageByml(new ByamlIterator(new MemoryStream(sarc.Files[bymlInfo.FileName])), bymlInfo.CategoryPrefix);
+                    levelReader.LoadStageByml(new ByamlIterator(new MemoryStream(sarc.Files[bymlInfo.FileName])), bymlInfo.CategoryPrefix, 
+                        Path.GetFileNameWithoutExtension(bymlInfo.FileName));
 
                     sarc.Files.Remove(bymlInfo.FileName);
                 }

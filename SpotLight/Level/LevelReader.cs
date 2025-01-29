@@ -10,6 +10,9 @@ using static Spotlight.Level.LevelIO;
 using GL_EditorFramework;
 using OpenTK;
 
+using Spotlight.XBW;
+using System.IO;
+
 namespace Spotlight.Level
 {
     class LevelReader
@@ -339,7 +342,7 @@ namespace Spotlight.Level
 
 
 
-        public void LoadStageByml(ByamlIterator byamlIter, string prefix)
+        public void LoadStageByml(ByamlIterator byamlIter, string prefix, string xbw_StageName)
         {
             objsByBymlRef.Clear();
 
@@ -410,8 +413,15 @@ namespace Spotlight.Level
                     foreach (ArrayEntry objEntry in entry.IterArray())
                     {
                         I3dWorldObject obj = ParseObject(objEntry, out bool alreadyAdded);
-                        if (!alreadyAdded)
+                        if (!alreadyAdded) {
                             list.Add(obj);
+                        }
+                    }
+                    //Console.WriteLine("XBW^^^^^^^^^   " + xbw_StageName);
+                    //XBW 这里得到了scene中所有的模型
+                    if (xbw_StageName.EndsWith("Map")) {
+                        XBW_OutputStageModel.
+                           ExportModelToDAE(@"D:\Project\Spotlight_3DWorld\ExportModelFile\" + xbw_StageName + ".dae");
                     }
                 }
             }

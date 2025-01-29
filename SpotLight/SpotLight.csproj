@@ -225,6 +225,7 @@
     <Compile Include="Storage\ObjectCamera.cs" />
     <Compile Include="GUI\QuickFavoritesControl.cs" />
     <Compile Include="Level\SceneStates.cs" />
+    <Compile Include="XBW\XBW_OutputStageModel.cs" />
     <None Include="Clear Pipes.cs" />
     <Compile Include="EditorDrawables\General3dWorldObject.cs" />
     <Compile Include="EditorDrawables\I3dWorldObject.cs" />
