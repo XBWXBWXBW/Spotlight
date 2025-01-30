@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
 using System.IO;
+using Spotlight.EditorDrawables;
 
 namespace Spotlight.XBW
 {
@@ -14,6 +15,7 @@ namespace Spotlight.XBW
         public static Dictionary<string, uint[]> shape_Indices = new Dictionary<string, uint[]>();
         public static Dictionary<string, string> shape_Name = new Dictionary<string, string>();
         public static Dictionary<string, string> shape_Parent = new Dictionary<string, string>();
+        public static List<General3dWorldObject> objList = new List<General3dWorldObject>()
 
         // 导出 DAE 文件
         public static void ExportModelToDAE(string filePath)
