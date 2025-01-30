@@ -426,7 +426,7 @@ namespace Spotlight.Level
                                 General3dWorldObject _obj = (General3dWorldObject)ob;
                                 //这里保存的是一个scene中所有的obj，例如有多个tree和多个cube
                                 ParentObject _pObj = new ParentObject();
-                                _pObj.objName = _obj.ObjectName;
+                                _pObj.objName = string.IsNullOrEmpty(_obj.ModelName) ? _obj.ObjectName : _obj.ModelName;
                                 _pObj.GlobalPosition = _obj.GlobalPosition;
                                 _pObj.GlobalRotation = _obj.GlobalRotation;
                                 _pObj.GlobalScale = _obj.GlobalScale;
