@@ -437,7 +437,7 @@ namespace Spotlight.Level
                     if (xbw_StageName.EndsWith("Map"))
                     {
                         XBW_OutputStageModel.
-                           ExportModelToDAE(@"D:\Project\Spotlight_3DWorld\ExportModelFile\" + xbw_StageName + ".dae");
+                           ExportModelToDAE(@"..\..\..\ExportModelFile\" + xbw_StageName + ".dae");
                     }
                 }
             }
