@@ -1,21 +1,48 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Xml;
-using System.IO;
 using Spotlight.EditorDrawables;
+using OpenTK;
 
 namespace Spotlight.XBW
 {
+    public static class MatrixExtensions
+    {
+        public static Matrix4 ToMatrix4(this Matrix3 matrix3)
+        {
+            return new Matrix4(
+                matrix3.M11, matrix3.M12, matrix3.M13, 0,
+                matrix3.M21, matrix3.M22, matrix3.M23, 0,
+                matrix3.M31, matrix3.M32, matrix3.M33, 0,
+                0, 0, 0, 1
+            );
+        }
+
+        public static float[] ToArray(this Matrix4 matrix)
+        {
+            return new float[]
+            {
+            matrix.M11, matrix.M21, matrix.M31, matrix.M41,  // 第一列
+            matrix.M12, matrix.M22, matrix.M32, matrix.M42,  // 第二列
+            matrix.M13, matrix.M23, matrix.M33, matrix.M43,  // 第三列
+            matrix.M14, matrix.M24, matrix.M34, matrix.M44   // 第四列
+            };
+        }
+    }
+    public class ParentObject {
+        public string objName;
+        public Vector3 GlobalPosition;
+        public Matrix3 GlobalRotation;
+        public Vector3 GlobalScale;
+    }
     public class XBW_OutputStageModel
     {
         public static Dictionary<string, float[]> shape_BufferData = new Dictionary<string, float[]>();
         public static Dictionary<string, uint[]> shape_Indices = new Dictionary<string, uint[]>();
         public static Dictionary<string, string> shape_Name = new Dictionary<string, string>();
         public static Dictionary<string, string> shape_Parent = new Dictionary<string, string>();
-        public static List<General3dWorldObject> objList = new List<General3dWorldObject>()
+        public static List<ParentObject> objList = new List<ParentObject>();
 
         // 导出 DAE 文件
         public static void ExportModelToDAE(string filePath)
@@ -32,7 +59,7 @@ namespace Spotlight.XBW
             XmlElement libraryGeometries = doc.CreateElement("library_geometries");
             collada.AppendChild(libraryGeometries);
 
-            XmlElement libraryVisualScenes = CreateVisualSceneElement(doc, shape_BufferData.Keys.ToList());
+            XmlElement libraryVisualScenes = CreateVisualSceneElement(doc);
             collada.AppendChild(libraryVisualScenes);
 
             foreach (string shapeID in shape_BufferData.Keys)
@@ -53,12 +80,12 @@ namespace Spotlight.XBW
             doc.Save(filePath);
         }
 
+        // 创建模型几何信息
         private static XmlElement CreateGeometryElement(XmlDocument doc, string shapeID, float[] bufferData, uint[] indices)
         {
             XmlElement geometry = doc.CreateElement("geometry");
             geometry.SetAttribute("id", shapeID + "-geometry");
 
-            // 设置 name，使用 shape_Name，如果没有则使用 shapeID
             if (shape_Name.TryGetValue(shapeID, out string realName))
             {
                 geometry.SetAttribute("name", realName);
@@ -123,59 +150,89 @@ namespace Spotlight.XBW
             triangles.AppendChild(texcoordInput);
 
             XmlElement pElement = doc.CreateElement("p");
-            pElement.InnerText = string.Join(" ", indices.SelectMany(i => Enumerable.Repeat(i, 3)));
+            pElement.InnerText = string.Join(" ", indices.Select((i, index) => $"{i} {index % 3} {index % 3}"));
             triangles.AppendChild(pElement);
 
             return geometry;
         }
 
-        private static XmlElement CreateVisualSceneElement(XmlDocument doc, List<string> shapeNames)
+        // 创建父节点的视觉场景
+        private static XmlElement CreateVisualSceneElement(XmlDocument doc)
         {
             XmlElement libraryVisualScenes = doc.CreateElement("library_visual_scenes");
             XmlElement visualScene = doc.CreateElement("visual_scene");
             visualScene.SetAttribute("id", "Scene");
             visualScene.SetAttribute("name", "Scene");
 
-            // 存储已经创建的父节点
-            Dictionary<string, XmlElement> parentNodes = new Dictionary<string, XmlElement>();
-
-            foreach (string shapeID in shapeNames)
+            int index = 0;
+            List<string> IDList = new List<string>();
+            foreach (ParentObject pObject in objList)
             {
-                // 获取父节点的名字
-                string parentName = shape_Parent.ContainsKey(shapeID) ? shape_Parent[shapeID] : "root";
+                string parentName = pObject.objName;
 
-                // 确保父节点存在
-                if (!parentNodes.TryGetValue(parentName, out XmlElement parentNode))
+                XmlElement parentNode = doc.CreateElement("node");
+                parentNode.SetAttribute("id", $"{parentName}_{index:D4}");
+                parentNode.SetAttribute("name", parentName);
+                parentNode.SetAttribute("type", "NODE");
+
+                // 计算变换矩阵（位置、旋转、缩放）
+                XmlElement matrixElement = CreateTransformElement(doc, pObject);
+                parentNode.AppendChild(matrixElement);  // 添加matrix到父节点
+
+                visualScene.AppendChild(parentNode);
+
+                //添加子节点
+                foreach (var _spPair in shape_Parent)
                 {
-                    parentNode = doc.CreateElement("node");
-                    parentNode.SetAttribute("id", "parent_" + parentName);
-                    parentNode.SetAttribute("name", parentName);
-                    parentNode.SetAttribute("type", "NODE");
-
-                    parentNodes[parentName] = parentNode;
-                    visualScene.AppendChild(parentNode); // 把父节点加入场景
+                    if (_spPair.Value == parentName)
+                    {
+                        //把所有在parentName下的模型的ID给收集起来
+                        IDList.Add(_spPair.Key);
+                    }
                 }
 
-                // 创建模型节点
-                XmlElement node = doc.CreateElement("node");
-                node.SetAttribute("id", "node_" + shapeID);
-                node.SetAttribute("name", shape_Name.ContainsKey(shapeID) ? shape_Name[shapeID] : shapeID);
-                node.SetAttribute("type", "NODE");
+                for (int cIndex = 0; cIndex < IDList.Count; cIndex++)
+                {
+                    string cOriginalID = IDList[cIndex];
+                    XmlElement node = doc.CreateElement("node");
 
-                // 绑定 geometry
-                XmlElement instanceGeometry = doc.CreateElement("instance_geometry");
-                instanceGeometry.SetAttribute("url", "#" + shapeID + "-geometry");
-                node.AppendChild(instanceGeometry);
+                    //为每个子节点添加一个新的id，基于父节点id和子节点id生成唯一id
+                    node.SetAttribute("id", $"{cOriginalID}_{index:D4}");
+                    node.SetAttribute("name", shape_Name[cOriginalID]);
+                    node.SetAttribute("type", "NODE");
 
-                // 把模型节点放入对应的父节点
-                parentNode.AppendChild(node);
+                    XmlElement instanceGeometry = doc.CreateElement("instance_geometry");
+                    //url是对应几何体的id
+                    instanceGeometry.SetAttribute("url", "#" + cOriginalID + "-geometry");
+                    node.AppendChild(instanceGeometry);
+
+                    parentNode.AppendChild(node);
+                }
+
+                IDList.Clear();
+                index++;
             }
 
             libraryVisualScenes.AppendChild(visualScene);
             return libraryVisualScenes;
         }
 
+        private static XmlElement CreateTransformElement(XmlDocument doc, ParentObject pObject)
+        {
+            XmlElement transform = doc.CreateElement("matrix");
 
+            // 生成变换矩阵，组合了位置、旋转和缩放
+            Matrix4 transformMatrix = pObject.GlobalRotation.ToMatrix4()
+                * Matrix4.CreateScale(pObject.GlobalScale)
+                * Matrix4.CreateTranslation(pObject.GlobalPosition);
+
+            // 将矩阵转为字符串并设置为文本内容
+            transform.InnerText = string.Join(" ", transformMatrix.ToArray().Select(f => f.ToString("0.000000")));
+            return transform;
+        }
+
+
+        // 创建一个XML元素并返回
         private static XmlElement CreateSourceElement(XmlDocument doc, string id, float[] data, int stride, params string[] paramNames)
         {
             XmlElement source = doc.CreateElement("source");
@@ -207,6 +264,7 @@ namespace Spotlight.XBW
             return source;
         }
 
+        // 创建输入元素，用于 mesh 中的 input 部分
         private static XmlElement CreateInputElement(XmlDocument doc, string semantic, string source, int offset)
         {
             XmlElement input = doc.CreateElement("input");

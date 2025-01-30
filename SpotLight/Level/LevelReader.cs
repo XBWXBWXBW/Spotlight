@@ -417,9 +417,25 @@ namespace Spotlight.Level
                             list.Add(obj);
                         }
                     }
-                    //Console.WriteLine("XBW^^^^^^^^^   " + xbw_StageName);
+
                     //XBW 这里得到了scene中所有的模型
-                    if (xbw_StageName.EndsWith("Map")) {
+                    if (entry.Key == "ObjectList")
+                    {
+                        foreach (var ob in list) {
+                            if (ob is General3dWorldObject) {
+                                General3dWorldObject _obj = (General3dWorldObject)ob;
+                                //这里保存的是一个scene中所有的obj，例如有多个tree和多个cube
+                                ParentObject _pObj = new ParentObject();
+                                _pObj.objName = _obj.ObjectName;
+                                _pObj.GlobalPosition = _obj.GlobalPosition;
+                                _pObj.GlobalRotation = _obj.GlobalRotation;
+                                _pObj.GlobalScale = _obj.GlobalScale;
+                                XBW_OutputStageModel.objList.Add(_pObj);
+                            }
+                        }
+                    }
+                    if (xbw_StageName.EndsWith("Map"))
+                    {
                         XBW_OutputStageModel.
                            ExportModelToDAE(@"D:\Project\Spotlight_3DWorld\ExportModelFile\" + xbw_StageName + ".dae");
                     }

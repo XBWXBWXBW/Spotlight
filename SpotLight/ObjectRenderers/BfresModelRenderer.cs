@@ -551,20 +551,15 @@ namespace Spotlight.ObjectRenderers
                     //XBW
                     //这里是遍历大模型中的所有的shape，把shape的bufferData和Indices保存下来，
                     //要导出模型，只需要这个bufferData和Indices即可
-                    if (!Regex.IsMatch(shape.Name, @"^.+Mat(\d{2})?$"))
-                    {
-                        //shape的名字后面不是"Mat"或者"Mat01","Mat02"等，即Mat后面没有数字，或者Mat后面跟着2个数字
-                        float[] _bufferData = new float[9 * vec4Positions.Length];
-                        bufferData.CopyTo(_bufferData, 0);
-                        string id = mdl.Name + "_" + shape.Name;
-                        XBW_OutputStageModel.shape_BufferData.Add(id, _bufferData);
-                        XBW_OutputStageModel.shape_Indices.Add(id, shape.Meshes[0].GetIndices().ToArray());
-                        XBW_OutputStageModel.shape_Name.Add(id, shape.Name);
-                        XBW_OutputStageModel.shape_Parent.Add(id, mdl.Name);
-                    }
+                    float[] _bufferData = new float[9 * vec4Positions.Length];
+                    bufferData.CopyTo(_bufferData, 0);
+                    string id = mdl.Name + "_" + shape.Name;
+                    XBW_OutputStageModel.shape_BufferData.Add(id, _bufferData);
+                    XBW_OutputStageModel.shape_Indices.Add(id, shape.Meshes[0].GetIndices().ToArray());
+                    XBW_OutputStageModel.shape_Name.Add(id, shape.Name);
+                    XBW_OutputStageModel.shape_Parent.Add(id, mdl.Name);
 
-                    if (xbw_Name == "EnterCatMarioStepA")
-                    {
+                    if (xbw_Name == "EnterCatMarioStepA") {
                         Console.WriteLine("");
                     }
                 }
