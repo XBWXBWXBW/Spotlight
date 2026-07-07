@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -40,6 +40,9 @@ namespace Spotlight.ObjectRenderers
         public static int DefaultTetxure;
 
         public static int NoTetxure;
+
+        // 新增：存放已解码/转换为 System.Drawing.Bitmap 的纹理，key = 纹理名（bfres 中的 key）
+        public static readonly Dictionary<string, System.Drawing.Bitmap> TextureBitmaps = new Dictionary<string, System.Drawing.Bitmap>();
 
         public static void Initialize()
         {
@@ -181,7 +184,7 @@ namespace Spotlight.ObjectRenderers
                             texArcCache.Add(textureArc, arc);
                             foreach (KeyValuePair<string, TextureShared> textureEntry in new ResFile(new MemoryStream(objArc.Files[textureArc + ".bfres"])).Textures)
                             {
-                                arc.Add(textureEntry.Key, UploadTexture(textureEntry.Value));
+                                arc.Add(textureEntry.Key, UploadTexture(textureEntry.Value, textureEntry.Key));
                             }
                         }
                 }
@@ -209,15 +212,34 @@ namespace Spotlight.ObjectRenderers
                                     OpenTK.Graphics.OpenGL.PixelFormat.Bgra, PixelType.UnsignedByte, data.Scan0);
 
                                 image.UnlockBits(data);
-                                image.Dispose();
+
+                                // 把从文件加载的 Bitmap 保存到全局字典，键使用不带后缀的文件名
+                                try
+                                {
+                                    string key = System.IO.Path.GetFileNameWithoutExtension(fileName);
+                                    var bmpCopy = new System.Drawing.Bitmap(fileName); // 新建一个副本，避免后续 Dispose 问题
+                                    lock (TextureBitmaps)
+                                    {
+                                        if (TextureBitmaps.ContainsKey(key))
+                                        {
+                                            try { TextureBitmaps[key].Dispose(); } catch { }
+                                            TextureBitmaps[key] = bmpCopy;
+                                        }
+                                        else
+                                            TextureBitmaps.Add(key, bmpCopy);
+                                    }
+                                    Console.WriteLine($"[BfresModelRenderer] Disk texture cached: {key} -> TextureBitmaps");
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine("[BfresModelRenderer] Failed to cache disk texture: " + ex.Message);
+                                }
 
                                 GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
 
                                 arc.Add(System.IO.Path.GetFileNameWithoutExtension(fileName), texID);
 
-                                //var imageForm = new System.Windows.Forms.Form();
-                                //imageForm.BackgroundImage = image;
-                                //imageForm.Show();
+                                image.Dispose();
                             }
                         }
                         
@@ -237,6 +259,9 @@ namespace Spotlight.ObjectRenderers
                 foreach (Shape shape in mdl.Shapes.Values)
                 {
                     uint[] indices = shape.Meshes[0].GetIndices().ToArray();
+
+        // --- 新增：在每个 shape 循环开始时初始化 assignedTextureName ---
+                    string assignedTextureName = null;
 
 #pragma warning disable CS0162 // Unreachable code detected
 
@@ -298,8 +323,9 @@ namespace Spotlight.ObjectRenderers
 
                             if (texture != null)
                             {
-                                textures[shapeIndex] = UploadTexture(texture);
-
+                                // 记录当前 shape 的纹理 key（用于后续导出）
+                                assignedTextureName = texRef.Name;
+                                textures[shapeIndex] = UploadTexture(texture, texRef.Name);
 
 
 
@@ -309,6 +335,7 @@ namespace Spotlight.ObjectRenderers
                                 if (texArcCache.ContainsKey(textureArc) && texArcCache[textureArc].ContainsKey(texRef.Name))
                                 {
                                     textures[shapeIndex] = texArcCache[textureArc][texRef.Name];
+                                    assignedTextureName = texRef.Name;
                                 }
                                 else
                                 {
@@ -559,9 +586,8 @@ namespace Spotlight.ObjectRenderers
                     XBW_OutputStageModel.shape_Name.Add(id, shape.Name);
                     XBW_OutputStageModel.shape_Parent.Add(id, mdl.Name);
 
-                    if (xbw_Name == "EnterCatMarioStepA") {
-                        Console.WriteLine("");
-                    }
+                    // --- 关键补丁：记录 shape 对应的 texture key（可能为 null/空） ---
+                    XBW_OutputStageModel.shape_TextureName[id] = assignedTextureName ?? string.Empty;
                 }
             }
 
@@ -994,87 +1020,266 @@ namespace Spotlight.ObjectRenderers
         /// </summary>
         /// <param name="texture">Texture to upload data from</param>
         /// <returns>Integer ID of the uploaded texture</returns>
-        private static int UploadTexture(TextureShared textureShared)
+        private static int UploadTexture(TextureShared textureShared, string textureName = null)
         {
+            // Get raw (deswizzled) surface data from TextureShared
             byte[] deswizzled = textureShared.GetDeswizzledData(0, 0);
 
-            if (deswizzled.Length == 0)
+            if (deswizzled == null || deswizzled.Length == 0)
                 return -2;
 
             PixelInternalFormat internalFormat;
 
+            // determine platform-format and internal format mapping
+            GX2SurfaceFormat? gx2Format = null;
+            Syroot.NintenTools.NSW.Bntx.GFX.SurfaceFormat? nsFormat = null;
+
+            if (textureShared is BfresLibrary.WiiU.Texture textureWiiU)
             {
-                if (textureShared is BfresLibrary.WiiU.Texture texture)
-                    GetPixelFormats(texture.Format, out internalFormat);
-                else if (textureShared is SwitchTexture textureNSW)
-                    GetPixelFormats(textureNSW.Format, out internalFormat);
-                else
-                    return -2;
+                gx2Format = textureWiiU.Format;
+                GetPixelFormats(textureWiiU.Format, out internalFormat);
             }
+            else if (textureShared is SwitchTexture textureNSW)
+            {
+                nsFormat = textureNSW.Format;
+                GetPixelFormats(textureNSW.Format, out internalFormat);
+            }
+            else
+                return -2;
 
-
-            
             int tex = GL.GenTexture();
-            GL.BindTexture(TextureTarget.Texture2D, tex);
+            GL.BindTexture(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, tex);
 
-            
-            //if (texture.Format == GX2SurfaceFormat.T_BC4_UNorm)
-            //{
-            //    deswizzled = DDSCompressor.DecompressBC4_JPH(deswizzled, (int)texture.Width, (int)texture.Height, false);
-            //    //deswizzled = DDSCompressor.DecompressBlock(deswizzled, (int)texture.Width, (int)texture.Height, DDSCompressor.DDS_DXGI_FORMAT.DXGI_FORMAT_BC4_UNORM);
-            //}
-            //else if (texture.Format == GX2SurfaceFormat.T_BC4_SNorm)
-            //{
-            //    deswizzled = DDSCompressor.DecompressBC4_JPH(deswizzled, (int)texture.Width, (int)texture.Height, true);
-            //    //deswizzled = DDSCompressor.DecompressBlock(deswizzled, (int)texture.Width, (int)texture.Height, DDSCompressor.DDS_DXGI_FORMAT.DXGI_FORMAT_BC4_SNORM);
-            //}
-            //else if (texture.Format == GX2SurfaceFormat.T_BC5_UNorm)
-            //{
-            //    //deswizzled = DDSCompressor.DecompressBC5(deswizzled, (int)texture.Width, (int)texture.Height, false, true);
-            //    deswizzled = DDSCompressor.DecompressBC5_JPH(deswizzled, (int)texture.Width, (int)texture.Height, false);
-            //}
-            //else if (texture.Format == GX2SurfaceFormat.T_BC5_SNorm)
-            //{
-            //    //deswizzled = DDSCompressor.DecompressBC5(deswizzled, (int)texture.Width, (int)texture.Height, true, true);
-            //    deswizzled = DDSCompressor.DecompressBC5_JPH(deswizzled, (int)texture.Width, (int)texture.Height, true);
-            //}
-            //else
+            // If not raw RGBA in GPU terms, try to decode compressed formats into RGBA for Bitmap export.
+            // If decoding succeeds we will both create a System.Drawing.Bitmap and upload the decoded RGBA to GL.
+            if (internalFormat != PixelInternalFormat.Rgba)
             {
-                if (internalFormat != PixelInternalFormat.Rgba)
-                {
-                    GL.CompressedTexImage2D(TextureTarget.Texture2D, 0, (InternalFormat)internalFormat, (int)textureShared.Width, (int)textureShared.Height, 0, deswizzled.Length, deswizzled);
+                byte[] decodedRGBA = null; // expected 4 bytes per pixel (BGRA or RGBA depending on decoder, we handle below)
 
-                    goto DATA_UPLOADED;
+                try
+                {
+                    // WiiU (GX2) formats -> use DDSCompressor BC decoders (in FileFormats3DW)
+                    if (gx2Format.HasValue)
+                    {
+                        switch (gx2Format.Value)
+                        {
+                            case GX2SurfaceFormat.T_BC1_UNorm:
+                            case GX2SurfaceFormat.T_BC1_SRGB:
+                                {
+                                    var dec = DDSCompressor.DecompressBC1(deswizzled, (int)textureShared.Width, (int)textureShared.Height, gx2Format.Value == GX2SurfaceFormat.T_BC1_SRGB);
+                                    decodedRGBA = dec.Data;
+                                    break;
+                                }
+                            case GX2SurfaceFormat.T_BC3_UNorm:
+                            case GX2SurfaceFormat.T_BC3_SRGB:
+                                {
+                                    var dec = DDSCompressor.DecompressBC3(deswizzled, (int)textureShared.Width, (int)textureShared.Height, gx2Format.Value == GX2SurfaceFormat.T_BC3_SRGB);
+                                    decodedRGBA = dec.Data;
+                                    break;
+                                }
+                            case GX2SurfaceFormat.T_BC5_UNorm:
+                            case GX2SurfaceFormat.T_BC5_SNorm:
+                                {
+                                    var dec = DDSCompressor.DecompressBC5(deswizzled, (int)textureShared.Width, (int)textureShared.Height, gx2Format.Value == GX2SurfaceFormat.T_BC5_SNorm);
+                                    decodedRGBA = dec.Data;
+                                    break;
+                                }
+                            case GX2SurfaceFormat.T_BC4_UNorm:
+                            case GX2SurfaceFormat.T_BC4_SNorm:
+                                {
+                                    var dec = DDSCompressor.DecompressBC4(deswizzled, (int)textureShared.Width, (int)textureShared.Height, gx2Format.Value == GX2SurfaceFormat.T_BC4_SNorm);
+                                    decodedRGBA = dec.Data;
+                                    break;
+                                }
+                            default:
+                                decodedRGBA = null;
+                                break;
+                        }
+                    }
+                    // Nintendo Switch surface formats -> map to same decoders where applicable
+                    else if (nsFormat.HasValue)
+                    {
+                        switch (nsFormat.Value)
+                        {
+                            case Syroot.NintenTools.NSW.Bntx.GFX.SurfaceFormat.BC1_UNORM:
+                            case Syroot.NintenTools.NSW.Bntx.GFX.SurfaceFormat.BC1_SRGB:
+                                {
+                                    var dec = DDSCompressor.DecompressBC1(deswizzled, (int)textureShared.Width, (int)textureShared.Height, nsFormat.Value == Syroot.NintenTools.NSW.Bntx.GFX.SurfaceFormat.BC1_SRGB);
+                                    decodedRGBA = dec.Data;
+                                    break;
+                                }
+                            case Syroot.NintenTools.NSW.Bntx.GFX.SurfaceFormat.BC3_UNORM:
+                            case Syroot.NintenTools.NSW.Bntx.GFX.SurfaceFormat.BC3_SRGB:
+                                {
+                                    var dec = DDSCompressor.DecompressBC3(deswizzled, (int)textureShared.Width, (int)textureShared.Height, nsFormat.Value == Syroot.NintenTools.NSW.Bntx.GFX.SurfaceFormat.BC3_SRGB);
+                                    decodedRGBA = dec.Data;
+                                    break;
+                                }
+                            case Syroot.NintenTools.NSW.Bntx.GFX.SurfaceFormat.BC5_UNORM:
+                            case Syroot.NintenTools.NSW.Bntx.GFX.SurfaceFormat.BC5_SNORM:
+                                {
+                                    var dec = DDSCompressor.DecompressBC5(deswizzled, (int)textureShared.Width, (int)textureShared.Height, nsFormat.Value == Syroot.NintenTools.NSW.Bntx.GFX.SurfaceFormat.BC5_SNORM);
+                                    decodedRGBA = dec.Data;
+                                    break;
+                                }
+                            case Syroot.NintenTools.NSW.Bntx.GFX.SurfaceFormat.BC4_UNORM:
+                            case Syroot.NintenTools.NSW.Bntx.GFX.SurfaceFormat.BC4_SNORM:
+                                {
+                                    var dec = DDSCompressor.DecompressBC4(deswizzled, (int)textureShared.Width, (int)textureShared.Height, nsFormat.Value == Syroot.NintenTools.NSW.Bntx.GFX.SurfaceFormat.BC4_SNORM);
+                                    decodedRGBA = dec.Data;
+                                    break;
+                                }
+                            default:
+                                decodedRGBA = null;
+                                break;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // decoding failed -> fall back to uploading compressed data (no bitmap)
+                    Console.WriteLine($"[BfresModelRenderer] Texture decode failed for '{textureName}': {ex.Message}");
+                    decodedRGBA = null;
+                }
+
+                if (decodedRGBA != null && decodedRGBA.Length >= textureShared.Width * textureShared.Height * 4)
+                {
+                    // DDSCompressor outputs bytes in BGRA order (see its implementation). System.Drawing.Bitmap Format32bppArgb
+                    // expects memory in BGRA on Windows, so we can copy directly.
+                    try
+                    {
+                        if (!string.IsNullOrEmpty(textureName))
+                        {
+                            var bmp = new System.Drawing.Bitmap((int)textureShared.Width, (int)textureShared.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                            var rect = new System.Drawing.Rectangle(0, 0, bmp.Width, bmp.Height);
+                            var bmpData = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.WriteOnly, bmp.PixelFormat);
+
+                            System.Runtime.InteropServices.Marshal.Copy(decodedRGBA, 0, bmpData.Scan0, (int)(textureShared.Width * textureShared.Height * 4));
+                            bmp.UnlockBits(bmpData);
+
+                            lock (TextureBitmaps)
+                            {
+                                if (TextureBitmaps.ContainsKey(textureName))
+                                {
+                                    try { TextureBitmaps[textureName].Dispose(); } catch { }
+                                    TextureBitmaps[textureName] = bmp;
+                                }
+                                else
+                                    TextureBitmaps.Add(textureName, bmp);
+                            }
+                        }
+
+                        // Upload decoded RGBA to GL as BGRA
+                        GL.TexImage2D(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba,
+                            (int)textureShared.Width, (int)textureShared.Height, 0,
+                            OpenTK.Graphics.OpenGL.PixelFormat.Bgra, PixelType.UnsignedByte, decodedRGBA);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[BfresModelRenderer] Failed to create/upload Bitmap for '{textureName}': {ex.Message}");
+                        // fallback: try compressed upload below
+                        decodedRGBA = null;
+                    }
+                }
+
+                if (decodedRGBA == null)
+                {
+                    // We could not decode to RGBA or failed to create Bitmap.
+                    // Upload the (already deswizzled) compressed data to GPU as compressed texture (existing behavior).
+                    try
+                    {
+                        GL.CompressedTexImage2D(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, 0, (OpenTK.Graphics.OpenGL.InternalFormat)internalFormat,
+                            (int)textureShared.Width, (int)textureShared.Height, 0, deswizzled.Length, deswizzled);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[BfresModelRenderer] Compressed upload failed for '{textureName}': {ex.Message}");
+                        // give up gracefully: create 1x1 'No texture' fallback
+                        var blank = new byte[] { 255, 255, 255, 255 };
+                        GL.TexImage2D(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, 1, 1, 0, OpenTK.Graphics.OpenGL.PixelFormat.Bgra, PixelType.UnsignedByte, blank);
+                    }
                 }
             }
-            GC.Collect();
-
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, (int)textureShared.Width, (int)textureShared.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, deswizzled);
-
-        DATA_UPLOADED:
-
+            else
             {
-                if (textureShared is BfresLibrary.WiiU.Texture texture)
+                // internalFormat == Rgba: deswizzled already raw RGBA-like bytes.
+                try
                 {
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureSwizzleR, (int)GetChannelSwap(texture.CompSelR));
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureSwizzleG, (int)GetChannelSwap(texture.CompSelG));
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureSwizzleB, (int)GetChannelSwap(texture.CompSelB));
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureSwizzleA, (int)GetChannelSwap(texture.CompSelA));
+                    if (!string.IsNullOrEmpty(textureName))
+                    {
+                        var bmp = new System.Drawing.Bitmap((int)textureShared.Width, (int)textureShared.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                        var rect = new System.Drawing.Rectangle(0, 0, bmp.Width, bmp.Height);
+                        var bmpData = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.WriteOnly, bmp.PixelFormat);
+
+                        // deswizzled is expected RGBA (R,G,B,A) but GL upload used Bgra in original code.
+                        // Convert RGBA -> BGRA for Bitmap memory.
+                        byte[] bgra = new byte[deswizzled.Length];
+                        for (int i = 0; i < deswizzled.Length; i += 4)
+                        {
+                            bgra[i + 0] = deswizzled[i + 2]; // B
+                            bgra[i + 1] = deswizzled[i + 1]; // G
+                            bgra[i + 2] = deswizzled[i + 0]; // R
+                            bgra[i + 3] = deswizzled[i + 3]; // A
+                        }
+
+                        System.Runtime.InteropServices.Marshal.Copy(bgra, 0, bmpData.Scan0, bgra.Length);
+                        bmp.UnlockBits(bmpData);
+
+                        lock (TextureBitmaps)
+                        {
+                            if (TextureBitmaps.ContainsKey(textureName))
+                            {
+                                try { TextureBitmaps[textureName].Dispose(); } catch { }
+                                TextureBitmaps[textureName] = bmp;
+                            }
+                            else
+                                TextureBitmaps.Add(textureName, bmp);
+                        }
+                    }
+
+                    // Upload original deswizzled bytes to GL as BGRA (original behavior)
+                    GL.TexImage2D(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba,
+                        (int)textureShared.Width, (int)textureShared.Height, 0,
+                        OpenTK.Graphics.OpenGL.PixelFormat.Bgra, PixelType.UnsignedByte, deswizzled);
                 }
-                else if (textureShared is SwitchTexture textureNSW)
+                catch
                 {
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureSwizzleR, (int)GetChannelSwap(textureNSW.Texture.ChannelRed));
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureSwizzleG, (int)GetChannelSwap(textureNSW.Texture.ChannelGreen));
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureSwizzleB, (int)GetChannelSwap(textureNSW.Texture.ChannelBlue));
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureSwizzleA, (int)GetChannelSwap(textureNSW.Texture.ChannelAlpha));
+                    // fallback to direct upload as RGBA if conversion/upload fails
+                    GL.TexImage2D(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba,
+                        (int)textureShared.Width, (int)textureShared.Height, 0,
+                        OpenTK.Graphics.OpenGL.PixelFormat.Rgba, PixelType.UnsignedByte, deswizzled);
                 }
             }
 
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.GenerateMipmap, 1);
+DATA_UPLOADED:
 
-            return tex;
+    // swizzle / channel remapping
+    if (textureShared is BfresLibrary.WiiU.Texture texW)
+    {
+        GL.TexParameter(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, OpenTK.Graphics.OpenGL.TextureParameterName.TextureSwizzleR, (int)GetChannelSwap(texW.CompSelR));
+        GL.TexParameter(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, OpenTK.Graphics.OpenGL.TextureParameterName.TextureSwizzleG, (int)GetChannelSwap(texW.CompSelG));
+        GL.TexParameter(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, OpenTK.Graphics.OpenGL.TextureParameterName.TextureSwizzleB, (int)GetChannelSwap(texW.CompSelB));
+        GL.TexParameter(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, OpenTK.Graphics.OpenGL.TextureParameterName.TextureSwizzleA, (int)GetChannelSwap(texW.CompSelA));
+    }
+    else if (textureShared is SwitchTexture texNSW)
+    {
+        GL.TexParameter(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, OpenTK.Graphics.OpenGL.TextureParameterName.TextureSwizzleR, (int)GetChannelSwap(texNSW.Texture.ChannelRed));
+        GL.TexParameter(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, OpenTK.Graphics.OpenGL.TextureParameterName.TextureSwizzleG, (int)GetChannelSwap(texNSW.Texture.ChannelGreen));
+        GL.TexParameter(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, OpenTK.Graphics.OpenGL.TextureParameterName.TextureSwizzleB, (int)GetChannelSwap(texNSW.Texture.ChannelBlue));
+        GL.TexParameter(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, OpenTK.Graphics.OpenGL.TextureParameterName.TextureSwizzleA, (int)GetChannelSwap(texNSW.Texture.ChannelAlpha));
+    }
+
+    GL.TexParameter(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, OpenTK.Graphics.OpenGL.TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+    GL.TexParameter(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, OpenTK.Graphics.OpenGL.TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+    GL.TexParameter(OpenTK.Graphics.OpenGL.TextureTarget.Texture2D, OpenTK.Graphics.OpenGL.TextureParameterName.GenerateMipmap, 1);
+
+    return tex;
         }
+
+        // 还需要把两个调用 UploadTexture 的地方改为传入纹理名（文件中两处调用）：
+        // 1) 当构建 texArcCache 时：
+        //     arc.Add(textureEntry.Key, UploadTexture(textureEntry.Value, textureEntry.Key));
+        // 2) 在为 shape 分配纹理时（有 texRef.Name 可用）：
+        //     textures[shapeIndex] = UploadTexture(texture, texRef.Name);
     }
 }

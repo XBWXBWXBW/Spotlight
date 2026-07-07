@@ -1,4 +1,4 @@
-﻿using BYAML;
+using BYAML;
 using Spotlight.EditorDrawables;
 using System;
 using System.Collections.Generic;
@@ -437,7 +437,7 @@ namespace Spotlight.Level
                     if (xbw_StageName.EndsWith("Map"))
                     {
                         XBW_OutputStageModel.
-                           ExportModelToDAE(@"..\..\..\ExportModelFile\" + xbw_StageName + ".dae");
+                           ExportModelToDAE($@"..\..\..\ExportModelFile\{xbw_StageName}\{xbw_StageName}.dae");
                     }
                 }
             }

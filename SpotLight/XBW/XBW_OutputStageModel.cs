@@ -1,9 +1,10 @@
-﻿using System;
+using OpenTK;
+using Spotlight.EditorDrawables;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Xml;
-using Spotlight.EditorDrawables;
-using OpenTK;
 
 namespace Spotlight.XBW
 {
@@ -23,54 +24,134 @@ namespace Spotlight.XBW
         {
             return new float[]
             {
-            matrix.M11, matrix.M21, matrix.M31, matrix.M41,  // 第一列
-            matrix.M12, matrix.M22, matrix.M32, matrix.M42,  // 第二列
-            matrix.M13, matrix.M23, matrix.M33, matrix.M43,  // 第三列
-            matrix.M14, matrix.M24, matrix.M34, matrix.M44   // 第四列
+                matrix.M11, matrix.M21, matrix.M31, matrix.M41,  // 第一列
+                matrix.M12, matrix.M22, matrix.M32, matrix.M42,  // 第二列
+                matrix.M13, matrix.M23, matrix.M33, matrix.M43,  // 第三列
+                matrix.M14, matrix.M24, matrix.M34, matrix.M44   // 第四列
             };
         }
     }
-    public class ParentObject {
+
+    public class ParentObject
+    {
         public string objName;
         public Vector3 GlobalPosition;
         public Matrix3 GlobalRotation;
         public Vector3 GlobalScale;
     }
+
     public class XBW_OutputStageModel
     {
         public static Dictionary<string, float[]> shape_BufferData = new Dictionary<string, float[]>();
         public static Dictionary<string, uint[]> shape_Indices = new Dictionary<string, uint[]>();
         public static Dictionary<string, string> shape_Name = new Dictionary<string, string>();
         public static Dictionary<string, string> shape_Parent = new Dictionary<string, string>();
+
+        // 【新增】存放每个 shapeID 对应的贴图文件名（例如: "Mario_Alb.png"）
+        public static Dictionary<string, string> shape_TextureName = new Dictionary<string, string>();
+
         public static List<ParentObject> objList = new List<ParentObject>();
 
+        // 辅助：根据 shapeID 生成安全名称（用于备用文件名）
+        private static string idSafeName(string id) { return Regex.Replace(id, @"[\/:*?""<>|]", "_"); }
         // 导出 DAE 文件
         public static void ExportModelToDAE(string filePath)
         {
-            XmlDocument doc = new XmlDocument();
-            XmlDeclaration xmlDeclaration = doc.CreateXmlDeclaration("1.0", "UTF-8", null);
-            doc.AppendChild(xmlDeclaration);
-
+            XmlDocument doc = new XmlDocument(); XmlDeclaration xmlDeclaration = doc.CreateXmlDeclaration("1.0", "UTF-8", null); doc.AppendChild(xmlDeclaration);
             XmlElement collada = doc.CreateElement("COLLADA");
             collada.SetAttribute("xmlns", "http://www.collada.org/2005/11/COLLADASchema");
             collada.SetAttribute("version", "1.4.1");
             doc.AppendChild(collada);
 
+            // 1. 创建资产和全局库节点
+            XmlElement libraryImages = doc.CreateElement("library_images");
+            XmlElement libraryMaterials = doc.CreateElement("library_materials");
+            XmlElement libraryEffects = doc.CreateElement("library_effects");
             XmlElement libraryGeometries = doc.CreateElement("library_geometries");
+
+            collada.AppendChild(libraryImages);
+            collada.AppendChild(libraryMaterials);
+            collada.AppendChild(libraryEffects);
             collada.AppendChild(libraryGeometries);
 
-            XmlElement libraryVisualScenes = CreateVisualSceneElement(doc);
-            collada.AppendChild(libraryVisualScenes);
+            // 准备导出目录
+            string outputDir = System.IO.Path.GetDirectoryName(filePath) ?? ".";
+            if (!System.IO.Directory.Exists(outputDir))
+                System.IO.Directory.CreateDirectory(outputDir);
 
+            // 记录已经保存过的 textureKey -> pngFileName 映射，避免重复保存
+            Dictionary<string, string> savedTextureFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            // 2. 遍历所有网格，生成模型几何信息，并动态生成对应的材质/特效/贴图节点
             foreach (string shapeID in shape_BufferData.Keys)
             {
                 shape_BufferData.TryGetValue(shapeID, out float[] bufferData);
                 shape_Indices.TryGetValue(shapeID, out uint[] indices);
 
+                // shape_TextureName 存的通常是 texture key（例如 texRef.Name），可能为空字符串
+                shape_TextureName.TryGetValue(shapeID, out string textureKey);
+
+                string textureFileName = null;
+
+                // 如果记录了 textureKey，尝试从 BfresModelRenderer.TextureBitmaps 取出 Bitmap
+                if (!string.IsNullOrEmpty(textureKey))
+                {
+                    //Console.WriteLine(shapeID+"  "+textureKey + "   XBW outside");
+
+                    // BfresModelRenderer 在 Spotlight.ObjectRenderers 命名空间
+                    if (Spotlight.ObjectRenderers.BfresModelRenderer.TextureBitmaps.TryGetValue(textureKey, out System.Drawing.Bitmap bmp))
+                    {
+                        //Console.WriteLine(shapeID + "  " + textureKey + "   XBW inside");
+
+                        if (!savedTextureFiles.TryGetValue(textureKey, out textureFileName))
+                        {
+                            // 生成安全的文件名并且保证唯一性
+                            string safeName = Regex.Replace(textureKey, @"[\\/:*?""<>|]", "_");
+                            textureFileName = safeName + ".png";
+                            string fullPath = System.IO.Path.Combine(outputDir, textureFileName);
+
+                            // 若文件已存在且不是同一 Bitmap，可以覆盖（简单策略）
+                            try
+                            {
+                                bmp.Save(fullPath, System.Drawing.Imaging.ImageFormat.Png);
+                            }
+                            catch
+                            {
+                                // 如果直接保存失败，尝试使用一个 shape 关联名
+                                textureFileName = idSafeName(shapeID) + "_" + safeName + ".png";
+                                fullPath = System.IO.Path.Combine(outputDir, textureFileName);
+                                bmp.Save(fullPath, System.Drawing.Imaging.ImageFormat.Png);
+                            }
+
+                            savedTextureFiles[textureKey] = textureFileName;
+                        }
+                    }
+                    else
+                    {
+                        // 如果 TextureBitmaps 中没有该 key，可能该 key 本身就是文件名（fallback）
+                        textureFileName = textureKey.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || textureKey.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+                            ? textureKey
+                            : textureKey + ".png";
+                    }
+                }
+
+                // 如果没有 texture（或未成功保存），使用默认贴图名
+                if (string.IsNullOrEmpty(textureFileName))
+                    textureFileName = "default_white.png";
+
+                // 生成几何体
                 XmlElement geometry = CreateGeometryElement(doc, shapeID, bufferData, indices);
                 libraryGeometries.AppendChild(geometry);
+
+                // 动态补全该模型的贴图与材质节点，传入 textureFileName（相对文件名）
+                BuildMaterialNodes(doc, shapeID, textureFileName, libraryImages, libraryMaterials, libraryEffects);
             }
 
+            // 3. 创建场景层级结构
+            XmlElement libraryVisualScenes = CreateVisualSceneElement(doc);
+            collada.AppendChild(libraryVisualScenes);
+
+            // 4. 激活场景
             XmlElement scene = doc.CreateElement("scene");
             XmlElement instanceVisualScene = doc.CreateElement("instance_visual_scene");
             instanceVisualScene.SetAttribute("url", "#Scene");
@@ -78,6 +159,75 @@ namespace Spotlight.XBW
             collada.AppendChild(scene);
 
             doc.Save(filePath);
+        }
+
+        // 动态构建 Collada 材质、特效、图像引用节点的函数
+        private static void BuildMaterialNodes(XmlDocument doc, string shapeID, string textureName, XmlElement libImages, XmlElement libMaterials, XmlElement libEffects)
+        {
+            string imgID = shapeID + "-image";
+            string matID = shapeID + "-material";
+            string effID = shapeID + "-effect";
+
+            // A. <library_images> 节点
+            XmlElement image = doc.CreateElement("image");
+            image.SetAttribute("id", imgID);
+            image.SetAttribute("name", shapeID + "_tex");
+            XmlElement initFrom = doc.CreateElement("init_from");
+            initFrom.InnerText = textureName; // 相对路径文件名
+            image.AppendChild(initFrom);
+            libImages.AppendChild(image);
+
+            // B. <library_materials> 节点
+            XmlElement material = doc.CreateElement("material");
+            material.SetAttribute("id", matID);
+            material.SetAttribute("name", shapeID + "_mat");
+            XmlElement instanceEffect = doc.CreateElement("instance_effect");
+            instanceEffect.SetAttribute("url", "#" + effID);
+            material.AppendChild(instanceEffect);
+            libMaterials.AppendChild(material);
+
+            // C. <library_effects> 节点 (标准 Blinn-Phong 材质模型渲染贴图)
+            XmlElement effect = doc.CreateElement("effect");
+            effect.SetAttribute("id", effID);
+
+            XmlElement profile = doc.CreateElement("profile_COMMON");
+
+            // 定义 Surface
+            XmlElement newParamSurf = doc.CreateElement("newparam");
+            newParamSurf.SetAttribute("sid", shapeID + "-surface");
+            XmlElement surface = doc.CreateElement("surface");
+            surface.SetAttribute("type", "2D");
+            XmlElement initFromSurf = doc.CreateElement("init_from");
+            initFromSurf.InnerText = imgID;
+            surface.AppendChild(initFromSurf);
+            newParamSurf.AppendChild(surface);
+            profile.AppendChild(newParamSurf);
+
+            // 定义 Sampler
+            XmlElement newParamSamp = doc.CreateElement("newparam");
+            newParamSamp.SetAttribute("sid", shapeID + "-sampler");
+            XmlElement sampler = doc.CreateElement("sampler2D");
+            XmlElement sourceSamp = doc.CreateElement("source");
+            sourceSamp.InnerText = shapeID + "-surface";
+            sampler.AppendChild(sourceSamp);
+            newParamSamp.AppendChild(sampler);
+            profile.AppendChild(newParamSamp);
+
+            // 渲染技术 (Technique) 绑定纹理到 Diffuse
+            XmlElement technique = doc.CreateElement("technique");
+            technique.SetAttribute("sid", "common");
+            XmlElement phong = doc.CreateElement("phong");
+            XmlElement diffuse = doc.CreateElement("diffuse");
+            XmlElement textureNode = doc.CreateElement("texture");
+            textureNode.SetAttribute("texture", shapeID + "-sampler");
+            textureNode.SetAttribute("texcoord", "UVSET0"); // 对应下面的 TEXCOORD 语义
+            diffuse.AppendChild(textureNode);
+            phong.AppendChild(diffuse);
+            technique.AppendChild(phong);
+            profile.AppendChild(technique);
+
+            effect.AppendChild(profile);
+            libEffects.AppendChild(effect);
         }
 
         // 创建模型几何信息
@@ -116,7 +266,7 @@ namespace Spotlight.XBW
             for (int i = 3, j = 0; i < bufferData.Length; i += 9, j += 2)
             {
                 texcoordsData[j] = bufferData[i];
-                texcoordsData[j + 1] = 1 - bufferData[i + 1];
+                texcoordsData[j + 1] = 1 - bufferData[i + 1]; // 翻转 V 轴符合标准
             }
 
             XmlElement positions = CreateSourceElement(doc, shapeID + "-positions", positionsData, 3, "X", "Y", "Z");
@@ -137,8 +287,10 @@ namespace Spotlight.XBW
 
             mesh.AppendChild(vertices);
 
+            // --- 核心修改：让三角形网格绑定对应的材质 ID ---
             XmlElement triangles = doc.CreateElement("triangles");
             triangles.SetAttribute("count", (indices.Length / 3).ToString());
+            triangles.SetAttribute("material", shapeID + "-material"); // 绑定材质
             mesh.AppendChild(triangles);
 
             XmlElement vertexInput = CreateInputElement(doc, "VERTEX", shapeID + "-vertex", 0);
@@ -175,18 +327,15 @@ namespace Spotlight.XBW
                 parentNode.SetAttribute("name", parentName);
                 parentNode.SetAttribute("type", "NODE");
 
-                // 计算变换矩阵（位置、旋转、缩放）
                 XmlElement matrixElement = CreateTransformElement(doc, pObject);
-                parentNode.AppendChild(matrixElement);  // 添加matrix到父节点
+                parentNode.AppendChild(matrixElement);
 
                 visualScene.AppendChild(parentNode);
 
-                //添加子节点
                 foreach (var _spPair in shape_Parent)
                 {
                     if (_spPair.Value == parentName)
                     {
-                        //把所有在parentName下的模型的ID给收集起来
                         IDList.Add(_spPair.Key);
                     }
                 }
@@ -196,16 +345,26 @@ namespace Spotlight.XBW
                     string cOriginalID = IDList[cIndex];
                     XmlElement node = doc.CreateElement("node");
 
-                    //为每个子节点添加一个新的id，基于父节点id和子节点id生成唯一id
                     node.SetAttribute("id", $"{cOriginalID}_{index:D4}");
                     node.SetAttribute("name", shape_Name[cOriginalID]);
                     node.SetAttribute("type", "NODE");
 
                     XmlElement instanceGeometry = doc.CreateElement("instance_geometry");
-                    //url是对应几何体的id
                     instanceGeometry.SetAttribute("url", "#" + cOriginalID + "-geometry");
-                    node.AppendChild(instanceGeometry);
 
+                    // --- 核心修改：在物体实例化时，把网格材质映射到实际的材质定义上 ---
+                    XmlElement bindMaterial = doc.CreateElement("bind_material");
+                    XmlElement techniqueCommon = doc.CreateElement("technique_common");
+                    XmlElement instanceMaterial = doc.CreateElement("instance_material");
+                    instanceMaterial.SetAttribute("symbol", cOriginalID + "-material");
+                    instanceMaterial.SetAttribute("target", "#" + cOriginalID + "-material");
+
+                    techniqueCommon.AppendChild(instanceMaterial);
+                    bindMaterial.AppendChild(techniqueCommon);
+                    instanceGeometry.AppendChild(bindMaterial);
+                    // -----------------------------------------------------------------
+
+                    node.AppendChild(instanceGeometry);
                     parentNode.AppendChild(node);
                 }
 
@@ -221,18 +380,14 @@ namespace Spotlight.XBW
         {
             XmlElement transform = doc.CreateElement("matrix");
 
-            // 生成变换矩阵，组合了位置、旋转和缩放
             Matrix4 transformMatrix = pObject.GlobalRotation.ToMatrix4()
                 * Matrix4.CreateScale(pObject.GlobalScale)
                 * Matrix4.CreateTranslation(pObject.GlobalPosition);
 
-            // 将矩阵转为字符串并设置为文本内容
             transform.InnerText = string.Join(" ", transformMatrix.ToArray().Select(f => f.ToString("0.000000")));
             return transform;
         }
 
-
-        // 创建一个XML元素并返回
         private static XmlElement CreateSourceElement(XmlDocument doc, string id, float[] data, int stride, params string[] paramNames)
         {
             XmlElement source = doc.CreateElement("source");
@@ -264,7 +419,6 @@ namespace Spotlight.XBW
             return source;
         }
 
-        // 创建输入元素，用于 mesh 中的 input 部分
         private static XmlElement CreateInputElement(XmlDocument doc, string semantic, string source, int offset)
         {
             XmlElement input = doc.CreateElement("input");
